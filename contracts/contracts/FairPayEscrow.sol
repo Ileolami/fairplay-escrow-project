@@ -4,20 +4,25 @@ pragma solidity ^0.8.28;
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title FairPayEscrow
+/// @author Ileolami
 /// @notice A time-bound, worker-protective escrow protocol.
-///         If the client does not act within the review window, funds
-///         automatically release to the freelancer — silence becomes consent.
+///         The contract itself is the neutral middleman — no human arbiter required.
+///
+///         Two symmetric rules govern outcomes:
+///           1. Silence from CLIENT during review  → freelancer auto-paid (consent)
+///           2. Silence from FREELANCER during dispute → client auto-refunded (abandonment)
 contract FairPayEscrow is ReentrancyGuard {
+
     // ─────────────────────────────────────────────
     // State machine
     // ─────────────────────────────────────────────
 
     enum State {
-        Created,     // contract deployed, awaiting deposit
+        Created,     // contract deployed, awaiting client deposit
         Funded,      // client deposited funds, awaiting work submission
-        UnderReview, // freelancer submitted work, 7-day review window open
-        Released,    // funds released (terminal)
-        Disputed     // client raised a dispute, awaiting arbiter
+        UnderReview, // freelancer submitted work, review window open
+        Disputed,    // client raised a dispute, freelancer must respond
+        Released     // funds fully released to one party (terminal)
     }
 
     // ─────────────────────────────────────────────
@@ -26,14 +31,17 @@ contract FairPayEscrow is ReentrancyGuard {
 
     address public immutable client;
     address public immutable freelancer;
-    address public immutable arbiter;
 
     uint256 public amount;
     State   public state;
 
     bytes32 public workHash;
     uint256 public submissionTimestamp;
-    uint256 public immutable reviewPeriod;
+
+    uint256 public immutable reviewPeriod;   // seconds client has to review work
+    uint256 public immutable disputePeriod;  // seconds freelancer has to respond to dispute
+
+    uint256 public disputeDeadline;          // set when dispute() is called
 
     // ─────────────────────────────────────────────
     // Events
@@ -42,9 +50,11 @@ contract FairPayEscrow is ReentrancyGuard {
     event Deposited(address indexed client, uint256 amount);
     event WorkSubmitted(address indexed freelancer, bytes32 workHash, uint256 timestamp);
     event Approved(address indexed client, uint256 amount);
-    event Disputed(address indexed client);
-    event DisputeResolved(address indexed arbiter, bool freelancerWins, uint256 amount);
-    event TimeoutClaimed(address indexed caller, uint256 amount);
+    event ReviewTimeoutClaimed(address indexed caller, uint256 amount);
+    event DisputeRaised(address indexed client, uint256 disputeDeadline);
+    event DisputeWithdrawn(address indexed client);
+    event RefundAccepted(address indexed freelancer, uint256 amount);
+    event DisputeTimeoutRefundClaimed(address indexed caller, uint256 amount);
 
     // ─────────────────────────────────────────────
     // Modifiers
@@ -60,13 +70,10 @@ contract FairPayEscrow is ReentrancyGuard {
         _;
     }
 
-    modifier onlyArbiter() {
-        require(msg.sender == arbiter, "FairPay: caller is not the arbiter");
-        _;
-    }
+    error UnexpectedState(State expected, State actual);
 
     modifier inState(State expected) {
-        require(state == expected, "FairPay: invalid state for this action");
+        if (state != expected) revert UnexpectedState(expected, state);
         _;
     }
 
@@ -74,28 +81,26 @@ contract FairPayEscrow is ReentrancyGuard {
     // Constructor
     // ─────────────────────────────────────────────
 
-    /// @param _freelancer Address of the worker who will perform the service
-    /// @param _arbiter    Trusted address that resolves disputes (MVP: single EOA)
-    /// @param _reviewPeriod Seconds the client has to review work before auto-release
-    ///                      (e.g. 604800 = 7 days)
+    /// @param _freelancer   Address of the worker who will perform the service
+    /// @param _reviewPeriod Seconds the client has to review submitted work before
+    ///                      funds auto-release to the freelancer (e.g. 604800 = 7 days)
+    /// @param _disputePeriod Seconds the freelancer has to respond to a dispute before
+    ///                       funds auto-refund to the client (e.g. 259200 = 3 days)
     constructor(
         address _freelancer,
-        address _arbiter,
-        uint256 _reviewPeriod
+        uint256 _reviewPeriod,
+        uint256 _disputePeriod
     ) {
-        require(_freelancer != address(0), "FairPay: zero freelancer address");
-        require(_arbiter   != address(0), "FairPay: zero arbiter address");
-        require(_reviewPeriod > 0,        "FairPay: review period must be > 0");
-        require(
-            _freelancer != msg.sender,
-            "FairPay: client and freelancer must differ"
-        );
+        require(_freelancer  != address(0), "FairPay: zero freelancer address");
+        require(_reviewPeriod  > 0,         "FairPay: review period must be > 0");
+        require(_disputePeriod > 0,         "FairPay: dispute period must be > 0");
+        require(_freelancer != msg.sender,  "FairPay: client and freelancer must differ");
 
-        client       = msg.sender;
-        freelancer   = _freelancer;
-        arbiter      = _arbiter;
-        reviewPeriod = _reviewPeriod;
-        state        = State.Created;
+        client        = msg.sender;
+        freelancer    = _freelancer;
+        reviewPeriod  = _reviewPeriod;
+        disputePeriod = _disputePeriod;
+        state         = State.Created;
     }
 
     // ─────────────────────────────────────────────
@@ -103,7 +108,7 @@ contract FairPayEscrow is ReentrancyGuard {
     // ─────────────────────────────────────────────
 
     /// @notice Client deposits the agreed payment into escrow.
-    ///         The value sent becomes the escrowed amount.
+    ///         The value sent (in wei) becomes the locked amount.
     function deposit()
         external
         payable
@@ -116,7 +121,9 @@ contract FairPayEscrow is ReentrancyGuard {
         emit Deposited(msg.sender, msg.value);
     }
 
-    /// @notice Freelancer submits a hash of their deliverable (off-chain reference).
+    /// @notice Freelancer submits a keccak256 hash of their deliverable.
+    ///         The real file lives off-chain (IPFS, GitHub, etc.). The hash
+    ///         is the immutable, on-chain proof of what was submitted and when.
     ///         Starts the review-window timer.
     /// @param _workHash keccak256 hash of the submitted work artifact
     function submitWork(bytes32 _workHash)
@@ -131,7 +138,7 @@ contract FairPayEscrow is ReentrancyGuard {
         emit WorkSubmitted(msg.sender, _workHash, block.timestamp);
     }
 
-    /// @notice Client explicitly approves the work and releases funds to freelancer.
+    /// @notice Client explicitly approves the work. Releases full payment to freelancer.
     function approve()
         external
         onlyClient
@@ -139,7 +146,7 @@ contract FairPayEscrow is ReentrancyGuard {
         nonReentrant
     {
         uint256 payout = amount;
-        // checks-effects-interactions
+        // checks-effects-interactions: state updated before external call
         state  = State.Released;
         amount = 0;
         (bool ok, ) = freelancer.call{value: payout}("");
@@ -147,22 +154,11 @@ contract FairPayEscrow is ReentrancyGuard {
         emit Approved(msg.sender, payout);
     }
 
-    /// @notice Client raises a dispute during the review window.
-    ///         Hands control to the arbiter.
-    function dispute()
-        external
-        onlyClient
-        inState(State.UnderReview)
-    {
-        state = State.Disputed;
-        emit Disputed(msg.sender);
-    }
-
-    /// @notice Anyone can trigger this once the review period has elapsed without
-    ///         client action. Funds auto-release to the freelancer.
-    ///         NOTE: block.timestamp can be manipulated ~15 s by miners; negligible
-    ///         for a 7-day window (< 0.003% variance).
-    function claimAfterTimeout()
+    /// @notice Anyone can trigger auto-release once the review period elapses without
+    ///         client action. Silence from client = consent. Funds go to freelancer.
+    ///         NOTE: block.timestamp can be manipulated ~15 s by validators — negligible
+    ///         for multi-day review windows (< 0.003% variance for 7 days).
+    function claimAfterReviewTimeout()
         external
         inState(State.UnderReview)
         nonReentrant
@@ -177,25 +173,71 @@ contract FairPayEscrow is ReentrancyGuard {
         amount = 0;
         (bool ok, ) = freelancer.call{value: payout}("");
         require(ok, "FairPay: transfer to freelancer failed");
-        emit TimeoutClaimed(msg.sender, payout);
+        emit ReviewTimeoutClaimed(msg.sender, payout);
     }
 
-    /// @notice Arbiter resolves a dispute and routes funds to the winner.
-    /// @param freelancerWins If true, freelancer receives funds; otherwise client does.
-    function resolveDispute(bool freelancerWins)
+    /// @notice Client raises a dispute during the review window.
+    ///         The freelancer now has `disputePeriod` seconds to either accept the
+    ///         refund or do nothing (which auto-refunds the client).
+    function dispute()
         external
-        onlyArbiter
+        onlyClient
+        inState(State.UnderReview)
+    {
+        disputeDeadline = block.timestamp + disputePeriod;
+        state = State.Disputed;
+        emit DisputeRaised(msg.sender, disputeDeadline);
+    }
+
+    /// @notice Freelancer accepts the dispute and voluntarily refunds the client.
+    ///         Use this when the freelancer acknowledges the work was unsatisfactory.
+    function acceptRefund()
+        external
+        onlyFreelancer
         inState(State.Disputed)
         nonReentrant
     {
-        uint256 payout  = amount;
-        address winner  = freelancerWins ? freelancer : client;
+        uint256 payout = amount;
         // checks-effects-interactions
         state  = State.Released;
         amount = 0;
-        (bool ok, ) = winner.call{value: payout}("");
-        require(ok, "FairPay: transfer to winner failed");
-        emit DisputeResolved(msg.sender, freelancerWins, payout);
+        (bool ok, ) = client.call{value: payout}("");
+        require(ok, "FairPay: refund to client failed");
+        emit RefundAccepted(msg.sender, payout);
+    }
+
+    /// @notice Client withdraws the dispute and returns the contract to UnderReview.
+    ///         Use this when the client is satisfied after re-examining the work.
+    ///         The original review deadline is NOT reset — remaining time continues unchanged.
+    function withdrawDispute()
+        external
+        onlyClient
+        inState(State.Disputed)
+    {
+        disputeDeadline = 0;
+        state = State.UnderReview;
+        emit DisputeWithdrawn(msg.sender);
+    }
+
+    /// @notice Anyone can trigger an auto-refund to the client once the dispute period
+    ///         elapses without the freelancer responding.
+    ///         Silence from freelancer during a dispute = abandonment. Funds go to client.
+    function claimRefundAfterDisputeTimeout()
+        external
+        inState(State.Disputed)
+        nonReentrant
+    {
+        require(
+            block.timestamp >= disputeDeadline,
+            "FairPay: dispute period has not elapsed"
+        );
+        uint256 payout = amount;
+        // checks-effects-interactions
+        state  = State.Released;
+        amount = 0;
+        (bool ok, ) = client.call{value: payout}("");
+        require(ok, "FairPay: refund to client failed");
+        emit DisputeTimeoutRefundClaimed(msg.sender, payout);
     }
 
     // ─────────────────────────────────────────────
@@ -209,9 +251,15 @@ contract FairPayEscrow is ReentrancyGuard {
         return submissionTimestamp + reviewPeriod;
     }
 
-    /// @notice Returns true if the review period has elapsed and funds can be claimed.
-    function isTimeoutReached() external view returns (bool) {
+    /// @notice Returns true if the review period has elapsed and auto-release can be triggered.
+    function isReviewTimeoutReached() external view returns (bool) {
         if (state != State.UnderReview) return false;
         return block.timestamp >= submissionTimestamp + reviewPeriod;
+    }
+
+    /// @notice Returns true if the dispute period has elapsed and auto-refund can be triggered.
+    function isDisputeTimeoutReached() external view returns (bool) {
+        if (state != State.Disputed) return false;
+        return block.timestamp >= disputeDeadline;
     }
 }
