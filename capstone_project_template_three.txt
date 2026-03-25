@@ -1,0 +1,16 @@
+Rootstock Builder Rootcamp: Capstone Submission Template | Assignment 3 - Mid-Project Review (Due March 23)
+
+
+- Student Name: Makinde Mercy
+- Hacktivator Email: makindemercymiracle@gmail.com
+- Hacktivator Username: ileolami
+- Module: Module 8 - Capstone Project
+- Assignment Type: Mid-Project Review
+
+Hacktivator Idea Link: https://hacktivator-marketplace.rootstock.io/idea/439
+GitHub Repository Link (Draft): https://github.com/Ileolami/fairplay-escrow-project
+Current Status: Implemented a smart contract but still testing it to check if it fit all the requirements.
+
+â—Important: 
+Your README must explain what the project does, the rules it enforces, and the reasoning behind your design choices. 
+Adding your draft repo Link here is optional, ensure to add a link to the repo on GitHub on the hacktivator idea comments section.
