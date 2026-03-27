@@ -100,6 +100,7 @@ export default function CreateEscrow({ onCreated }: { onCreated?: () => void }) 
           <input
             type="number"
             min="1"
+            placeholder="14"
             value={workDays}
             onChange={(e) => setWorkDays(e.target.value)}
             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
@@ -112,6 +113,7 @@ export default function CreateEscrow({ onCreated }: { onCreated?: () => void }) 
           <input
             type="number"
             min="1"
+            placeholder="3"
             value={reviewDays}
             onChange={(e) => setReviewDays(e.target.value)}
             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
@@ -124,6 +126,7 @@ export default function CreateEscrow({ onCreated }: { onCreated?: () => void }) 
           <input
             type="number"
             min="1"
+            placeholder="5"
             value={disputeDays}
             onChange={(e) => setDisputeDays(e.target.value)}
             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"

@@ -6,7 +6,6 @@ import { injected } from "wagmi";
 import { ThirdwebProvider, useActiveAccount } from "thirdweb/react";
 import { useEffect, useRef } from "react";
 import { wagmiConfig } from "@/lib/wagmi";
-import { client } from "@/lib/client";
 
 const queryClient = new QueryClient();
 
