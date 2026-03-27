@@ -14,6 +14,7 @@ Fill in your details and the required links, then upload it to the corresponding
 Final GitHub Repository Link: https://github.com/Ileolami/fairplay-escrow-project
 Verified Contract Address (Explorer): [https://explorer.testnet.rootstock.io/address/0xc9e098e62c14c8dc015f238c226ea581fa5c4425]
 Hacktivator Idea Link: [https://hacktivator-marketplace.rootstock.io/idea/439](https://hacktivator-marketplace.rootstock.io/idea/439)
+Live Demo Link: [https://fairplay-escrow-project.vercel.app/](https://fairplay-escrow-project.vercel.app/)
 
 â—Important: 
 Your README must explain what the project does, the rules it enforces, and the reasoning behind your design choices. 
