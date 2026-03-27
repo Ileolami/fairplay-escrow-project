@@ -1,13 +1,14 @@
 {
-  "name": "FairPlayEscrow",
+  "name": "FairPayEscrow",
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "set": "npx hardhat vars set",
     "get": "npx hardhat vars get",
-    "deploy": "npx hardhat script deploy",
-    "compile": "npx hardhat compile"
+    "deploy": "npx hardhat ignition deploy ./ignition/modules/FairPayEscrow.ts --network rskTestnet",
+    "compile": "npx hardhat compile",
+    "test": "npx hardhat test",
+    "flatten": "npx hardhat flatten contracts/FairPayEscrow.sol > contracts/FairPayEscrow_flat.sol"
   },
   "keywords": [],
   "author": "",
