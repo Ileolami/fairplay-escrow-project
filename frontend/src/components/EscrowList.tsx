@@ -14,15 +14,25 @@ export default function EscrowList({
 }) {
   const { address } = useConnection();
 
-  const { data: escrowCount, refetch } = useReadContract({
+  const { data: escrowCount, isLoading: countLoading, refetch } = useReadContract({
     address: CONTRACT_ADDRESS,
     abi: FAIRPAY_ABI,
     functionName: "escrowCount",
   });
 
-  const count = escrowCount ? Number(escrowCount) : 0;
+  if (countLoading || escrowCount === undefined) {
+    return (
+      <div className="space-y-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="animate-pulse rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="h-4 w-32 rounded bg-zinc-200 dark:bg-zinc-700" />
+          </div>
+        ))}
+      </div>
+    );
+  }
 
-  const ids = Array.from({ length: count }, (_, i) => BigInt(i));
+  const count = Number(escrowCount);
 
   if (count === 0) {
     return (
@@ -31,6 +41,8 @@ export default function EscrowList({
       </div>
     );
   }
+
+  const ids = Array.from({ length: count }, (_, i) => BigInt(i));
 
   return (
     <div className="space-y-3">
@@ -62,18 +74,23 @@ function EscrowCardWrapper({
   address?: string;
   onRefresh?: () => void;
 }) {
-  const { data: escrow } = useReadContract({
+  const { data: escrow, isLoading } = useReadContract({
     address: CONTRACT_ADDRESS,
     abi: FAIRPAY_ABI,
     functionName: "getEscrow",
     args: [escrowId],
   }) as {
-    data:
-      | { client: `0x${string}`; freelancer: `0x${string}` }
-      | undefined;
+    data: { client: `0x${string}`; freelancer: `0x${string}` } | undefined;
+    isLoading: boolean;
   };
 
-  if (!escrow) return null;
+  if (isLoading || !escrow) {
+    return (
+      <div className="animate-pulse rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="h-4 w-32 rounded bg-zinc-200 dark:bg-zinc-700" />
+      </div>
+    );
+  }
 
   if (filter === "mine" && address) {
     const isInvolved =

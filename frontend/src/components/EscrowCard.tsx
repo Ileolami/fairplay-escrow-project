@@ -31,6 +31,12 @@ function formatAddr(addr: string) {
   return addr.slice(0, 6) + "..." + addr.slice(-4);
 }
 
+function formatAmount(wei: bigint): string {
+  const raw = formatEther(wei);
+  // Remove trailing zeros after decimal point, keep at least one digit
+  return raw.includes(".") ? raw.replace(/\.?0+$/, "") : raw;
+}
+
 function formatDate(ts: bigint) {
   if (ts === BigInt(0)) return "—";
   return new Date(Number(ts) * 1000).toLocaleDateString();
@@ -61,15 +67,13 @@ function ActionButton({
   );
 }
 
-const URL_REGEX = /https?:\/\/[^\s]+/g;
-
 function LinkOrText({ value }: { value: string }) {
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
+  const urlRegex = /https?:\/\/[^\s]+/g;
 
-  URL_REGEX.lastIndex = 0;
-  while ((match = URL_REGEX.exec(value)) !== null) {
+  while ((match = urlRegex.exec(value)) !== null) {
     if (match.index > lastIndex) {
       parts.push(value.slice(lastIndex, match.index));
     }
@@ -200,7 +204,7 @@ export default function EscrowCard({
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            {formatEther(escrow.amount)} tRBTC
+            {formatAmount(escrow.amount)} tRBTC
           </span>
           <span className="text-zinc-400">{expanded ? "▲" : "▼"}</span>
         </div>
@@ -225,7 +229,7 @@ export default function EscrowCard({
             <div>
               <p className="text-zinc-500">Amount</p>
               <p className="text-zinc-800 dark:text-zinc-200">
-                {formatEther(escrow.amount)} tRBTC
+                {formatAmount(escrow.amount)} tRBTC
               </p>
             </div>
             <div>
@@ -310,7 +314,7 @@ export default function EscrowCard({
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
-                    step="0.0001"
+                    step="any"
                     min="0"
                     placeholder="Amount (tRBTC)"
                     value={depositAmount}
