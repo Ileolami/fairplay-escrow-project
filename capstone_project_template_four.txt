@@ -1,0 +1,20 @@
+Rootstock Builder Rootcamp: Capstone Submission Template | Assignment 4 - Final Project Submission (Due March 28)
+
+Instructions for Participants
+
+Copy the relevant section below into a new text file or document. 
+Fill in your details and the required links, then upload it to the corresponding Assignment lesson on Thinkific.
+
+- Student Name: Makinde Mercy
+- Hacktivator Email: makindemercymiracle@gmail.com
+- Hacktivator Username: ileolami
+- Module: Module 8 - Capstone Project
+- Assignment Type: Final Project Submission
+
+Final GitHub Repository Link: https://github.com/Ileolami/fairplay-escrow-project
+Verified Contract Address (Explorer): [https://explorer.testnet.rootstock.io/address/0xfc550be077d024566b8a9226e0c3bf6182976100]
+Hacktivator Idea Link: [https://hacktivator-marketplace.rootstock.io/idea/439](https://hacktivator-marketplace.rootstock.io/idea/439)
+
+â—Important: 
+Your README must explain what the project does, the rules it enforces, and the reasoning behind your design choices. 
+Adding your draft repo Link here is optional, ensure to add a link to the repo on GitHub on the hacktivator idea comments section.
