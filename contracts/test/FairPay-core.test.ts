@@ -2,16 +2,17 @@ import {
   time,
   loadFixture,
 } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { expect } from "chai";
 import hre from "hardhat";
 
 describe("FairPayEscrow — Core", function () {
-  const REVIEW_PERIOD = 7 * 24 * 60 * 60;
-  const DISPUTE_PERIOD = 3 * 24 * 60 * 60;
-  const WORK_DURATION = 14 * 24 * 60 * 60;
-  const DEPOSIT = hre.ethers.parseEther("1.0");
-  const WORK_HASH = hre.ethers.keccak256(hre.ethers.toUtf8Bytes("deliverable-v1"));
+  const REVIEW_PERIOD   = 7 * 24 * 60 * 60;
+  const DISPUTE_PERIOD  = 3 * 24 * 60 * 60;
+  const WORK_DURATION   = 14 * 24 * 60 * 60;
+  const DEPOSIT         = hre.ethers.parseEther("1.0");
+  const WORK_LINK       = "https://github.com/user/deliverable";
+  const DISPUTE_REASON  = "Work does not meet requirements";
+  const PROOF_LINK      = "https://proof.example.com/v1";
 
   const State = { Created: 0, Funded: 1, UnderReview: 2, Disputed: 3, Released: 4 };
 
@@ -26,7 +27,7 @@ describe("FairPayEscrow — Core", function () {
 
   async function createdFixture() {
     const base = await deployFixture();
-    const tx = await base.contract.connect(base.client).createEscrow(
+    await base.contract.connect(base.client).createEscrow(
       base.freelancer.address, REVIEW_PERIOD, DISPUTE_PERIOD, WORK_DURATION
     );
     return { ...base, escrowId: 0 };
@@ -40,7 +41,13 @@ describe("FairPayEscrow — Core", function () {
 
   async function underReviewFixture() {
     const base = await fundedFixture();
-    await base.contract.connect(base.freelancer).submitWork(base.escrowId, WORK_HASH);
+    await base.contract.connect(base.freelancer).submitWork(base.escrowId, WORK_LINK);
+    return base;
+  }
+
+  async function disputedFixture() {
+    const base = await underReviewFixture();
+    await base.contract.connect(base.client).dispute(base.escrowId, DISPUTE_REASON);
     return base;
   }
 
@@ -205,14 +212,14 @@ describe("FairPayEscrow — Core", function () {
   // ─── Submit Work ───────────────────────────────
 
   describe("Submit Work", function () {
-    it("should store hash, set timestamp, transition to UnderReview", async function () {
+    it("should store work link, set timestamp, transition to UnderReview", async function () {
       const { contract, freelancer, escrowId } = await loadFixture(fundedFixture);
 
-      await expect(contract.connect(freelancer).submitWork(escrowId, WORK_HASH))
-        .to.emit(contract, "WorkSubmitted").withArgs(escrowId, freelancer.address, WORK_HASH);
+      await expect(contract.connect(freelancer).submitWork(escrowId, WORK_LINK))
+        .to.emit(contract, "WorkSubmitted").withArgs(escrowId, freelancer.address, WORK_LINK);
 
       const e = await contract.getEscrow(escrowId);
-      expect(e.workHash).to.equal(WORK_HASH);
+      expect(e.workLink).to.equal(WORK_LINK);
       expect(e.submissionTimestamp).to.be.greaterThan(0);
       expect(e.state).to.equal(State.UnderReview);
     });
@@ -221,28 +228,28 @@ describe("FairPayEscrow — Core", function () {
       const { contract, freelancer, escrowId } = await loadFixture(fundedFixture);
       await time.increase(WORK_DURATION);
       await expect(
-        contract.connect(freelancer).submitWork(escrowId, WORK_HASH)
+        contract.connect(freelancer).submitWork(escrowId, WORK_LINK)
       ).to.be.revertedWithCustomError(contract, "WorkDeadlineElapsed");
     });
 
     it("should revert if not the freelancer", async function () {
       const { contract, client, escrowId } = await loadFixture(fundedFixture);
       await expect(
-        contract.connect(client).submitWork(escrowId, WORK_HASH)
+        contract.connect(client).submitWork(escrowId, WORK_LINK)
       ).to.be.revertedWithCustomError(contract, "OnlyFreelancer");
     });
 
-    it("should revert if hash is empty", async function () {
+    it("should revert if work link is empty", async function () {
       const { contract, freelancer, escrowId } = await loadFixture(fundedFixture);
       await expect(
-        contract.connect(freelancer).submitWork(escrowId, hre.ethers.ZeroHash)
-      ).to.be.revertedWithCustomError(contract, "EmptyWorkHash");
+        contract.connect(freelancer).submitWork(escrowId, "")
+      ).to.be.revertedWithCustomError(contract, "EmptyWorkLink");
     });
 
     it("should revert if not in Funded state", async function () {
       const { contract, freelancer, escrowId } = await loadFixture(createdFixture);
       await expect(
-        contract.connect(freelancer).submitWork(escrowId, WORK_HASH)
+        contract.connect(freelancer).submitWork(escrowId, WORK_LINK)
       ).to.be.revertedWithCustomError(contract, "UnexpectedState");
     });
   });
@@ -311,6 +318,169 @@ describe("FairPayEscrow — Core", function () {
     });
   });
 
+  // ─── Dispute ───────────────────────────────────
+
+  describe("Dispute", function () {
+    it("should raise dispute with reason and transition to Disputed", async function () {
+      const { contract, client, escrowId } = await loadFixture(underReviewFixture);
+
+      await expect(contract.connect(client).dispute(escrowId, DISPUTE_REASON))
+        .to.emit(contract, "DisputeRaised")
+        .withArgs(escrowId, client.address, (v: bigint) => v > 0n, DISPUTE_REASON);
+
+      const e = await contract.getEscrow(escrowId);
+      expect(e.state).to.equal(State.Disputed);
+      expect(e.disputeReason).to.equal(DISPUTE_REASON);
+      expect(e.disputeResponded).to.equal(false);
+      expect(e.disputeDeadline).to.be.greaterThan(0);
+    });
+
+    it("should revert if reason is empty", async function () {
+      const { contract, client, escrowId } = await loadFixture(underReviewFixture);
+      await expect(
+        contract.connect(client).dispute(escrowId, "")
+      ).to.be.revertedWithCustomError(contract, "EmptyWorkLink");
+    });
+
+    it("should revert if not the client", async function () {
+      const { contract, freelancer, escrowId } = await loadFixture(underReviewFixture);
+      await expect(
+        contract.connect(freelancer).dispute(escrowId, DISPUTE_REASON)
+      ).to.be.revertedWithCustomError(contract, "OnlyClient");
+    });
+
+    it("should revert if not in UnderReview state", async function () {
+      const { contract, client, escrowId } = await loadFixture(fundedFixture);
+      await expect(
+        contract.connect(client).dispute(escrowId, DISPUTE_REASON)
+      ).to.be.revertedWithCustomError(contract, "UnexpectedState");
+    });
+  });
+
+  // ─── Submit Dispute Proof ──────────────────────
+
+  describe("Submit Dispute Proof", function () {
+    it("should store proof link, set responded, reset deadline", async function () {
+      const { contract, freelancer, escrowId } = await loadFixture(disputedFixture);
+
+      await expect(contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_LINK))
+        .to.emit(contract, "DisputeProofSubmitted")
+        .withArgs(escrowId, freelancer.address, PROOF_LINK);
+
+      const e = await contract.getEscrow(escrowId);
+      expect(e.disputeProof).to.equal(PROOF_LINK);
+      expect(e.disputeResponded).to.equal(true);
+      expect(e.state).to.equal(State.Disputed);
+    });
+
+    it("should revert if proof is empty", async function () {
+      const { contract, freelancer, escrowId } = await loadFixture(disputedFixture);
+      await expect(
+        contract.connect(freelancer).submitDisputeProof(escrowId, "")
+      ).to.be.revertedWithCustomError(contract, "EmptyWorkLink");
+    });
+
+    it("should revert if freelancer already responded", async function () {
+      const { contract, freelancer, escrowId } = await loadFixture(disputedFixture);
+      await contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_LINK);
+      await expect(
+        contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_LINK)
+      ).to.be.revertedWithCustomError(contract, "FreelancerAlreadyResponded");
+    });
+
+    it("should revert if not the freelancer", async function () {
+      const { contract, client, escrowId } = await loadFixture(disputedFixture);
+      await expect(
+        contract.connect(client).submitDisputeProof(escrowId, PROOF_LINK)
+      ).to.be.revertedWithCustomError(contract, "OnlyFreelancer");
+    });
+  });
+
+  // ─── Dispute Resolution ────────────────────────
+
+  describe("Dispute Resolution", function () {
+    it("approveAfterDispute: pays freelancer after proof submitted", async function () {
+      const { contract, client, freelancer, escrowId } = await loadFixture(disputedFixture);
+      await contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_LINK);
+
+      const balBefore = await hre.ethers.provider.getBalance(freelancer.address);
+      await expect(contract.connect(client).approveAfterDispute(escrowId))
+        .to.emit(contract, "DisputeApproved").withArgs(escrowId, client.address, DEPOSIT);
+
+      const e = await contract.getEscrow(escrowId);
+      expect(e.state).to.equal(State.Released);
+      const balAfter = await hre.ethers.provider.getBalance(freelancer.address);
+      expect(balAfter).to.equal(balBefore + DEPOSIT);
+    });
+
+    it("approveAfterDispute: reverts if freelancer has not responded", async function () {
+      const { contract, client, escrowId } = await loadFixture(disputedFixture);
+      await expect(
+        contract.connect(client).approveAfterDispute(escrowId)
+      ).to.be.revertedWithCustomError(contract, "DisputeNotResponded");
+    });
+
+    it("withdrawDispute: returns to UnderReview and clears dispute fields", async function () {
+      const { contract, client, escrowId } = await loadFixture(disputedFixture);
+
+      await expect(contract.connect(client).withdrawDispute(escrowId))
+        .to.emit(contract, "DisputeWithdrawn").withArgs(escrowId, client.address);
+
+      const e = await contract.getEscrow(escrowId);
+      expect(e.state).to.equal(State.UnderReview);
+      expect(e.disputeReason).to.equal("");
+      expect(e.disputeProof).to.equal("");
+      expect(e.disputeDeadline).to.equal(0);
+    });
+
+    it("acceptRefund: freelancer refunds client voluntarily", async function () {
+      const { contract, freelancer, client, escrowId } = await loadFixture(disputedFixture);
+      const balBefore = await hre.ethers.provider.getBalance(client.address);
+
+      await expect(contract.connect(freelancer).acceptRefund(escrowId))
+        .to.emit(contract, "RefundAccepted").withArgs(escrowId, freelancer.address, DEPOSIT);
+
+      const e = await contract.getEscrow(escrowId);
+      expect(e.state).to.equal(State.Released);
+      const balAfter = await hre.ethers.provider.getBalance(client.address);
+      expect(balAfter).to.be.greaterThan(balBefore);
+    });
+
+    it("claimAfterDisputeTimeout: refunds client if freelancer never responded", async function () {
+      const { contract, outsider, client, escrowId } = await loadFixture(disputedFixture);
+      const balBefore = await hre.ethers.provider.getBalance(client.address);
+
+      await time.increase(DISPUTE_PERIOD);
+
+      await expect(contract.connect(outsider).claimAfterDisputeTimeout(escrowId))
+        .to.emit(contract, "DisputeTimeoutRefunded").withArgs(escrowId, outsider.address, DEPOSIT);
+
+      const balAfter = await hre.ethers.provider.getBalance(client.address);
+      expect(balAfter).to.be.greaterThan(balBefore);
+    });
+
+    it("claimAfterDisputeTimeout: pays freelancer if they responded and client was silent", async function () {
+      const { contract, freelancer, outsider, escrowId } = await loadFixture(disputedFixture);
+      await contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_LINK);
+
+      const balBefore = await hre.ethers.provider.getBalance(freelancer.address);
+      await time.increase(DISPUTE_PERIOD);
+
+      await expect(contract.connect(outsider).claimAfterDisputeTimeout(escrowId))
+        .to.emit(contract, "DisputeTimeoutReleased").withArgs(escrowId, outsider.address, DEPOSIT);
+
+      const balAfter = await hre.ethers.provider.getBalance(freelancer.address);
+      expect(balAfter).to.equal(balBefore + DEPOSIT);
+    });
+
+    it("claimAfterDisputeTimeout: reverts before deadline", async function () {
+      const { contract, outsider, escrowId } = await loadFixture(disputedFixture);
+      await expect(
+        contract.connect(outsider).claimAfterDisputeTimeout(escrowId)
+      ).to.be.revertedWithCustomError(contract, "DisputePeriodNotElapsed");
+    });
+  });
+
   // ─── View Helpers ──────────────────────────────
 
   describe("View Helpers", function () {
@@ -332,6 +502,13 @@ describe("FairPayEscrow — Core", function () {
       expect(await contract.isReviewTimeoutReached(escrowId)).to.equal(false);
       await time.increase(REVIEW_PERIOD);
       expect(await contract.isReviewTimeoutReached(escrowId)).to.equal(true);
+    });
+
+    it("isDisputeTimeoutReached false before, true after", async function () {
+      const { contract, escrowId } = await loadFixture(disputedFixture);
+      expect(await contract.isDisputeTimeoutReached(escrowId)).to.equal(false);
+      await time.increase(DISPUTE_PERIOD);
+      expect(await contract.isDisputeTimeoutReached(escrowId)).to.equal(true);
     });
 
     it("isWorkDeadlineElapsed false before, true after", async function () {

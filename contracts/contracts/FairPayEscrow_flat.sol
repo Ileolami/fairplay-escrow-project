@@ -301,7 +301,7 @@ struct Escrow {
     address freelancer;
     uint256 amount;
     State   state;
-    bytes32 workHash;
+    string  workLink;
     uint256 submissionTimestamp;
     uint256 reviewPeriod;
     uint256 disputePeriod;
@@ -309,7 +309,8 @@ struct Escrow {
     uint256 workDeadline;
     uint256 disputeDeadline;
     bool    disputeResponded;
-    bytes32 disputeProofHash;
+    string  disputeReason;
+    string  disputeProof;
 }
 
 // ─────────────────────────────────────────────
@@ -323,7 +324,7 @@ error ZeroAddress();
 error ZeroPeriod();
 error ClientFreelancerSame();
 error ZeroDeposit();
-error EmptyWorkHash();
+error EmptyWorkLink();
 error ReviewPeriodNotElapsed();
 error DisputePeriodNotElapsed();
 error TransferFailed();
@@ -365,11 +366,11 @@ contract FairPayEscrow is ReentrancyGuard {
     event EscrowCreated(uint256 indexed escrowId, address indexed client, address indexed freelancer);
     event Deposited(uint256 indexed escrowId, address indexed client, uint256 amount);
     event EscrowCancelled(uint256 indexed escrowId, address indexed client, uint256 amount);
-    event WorkSubmitted(uint256 indexed escrowId, address indexed freelancer, bytes32 workHash);
+    event WorkSubmitted(uint256 indexed escrowId, address indexed freelancer, string workLink);
     event Approved(uint256 indexed escrowId, address indexed client, uint256 amount);
     event ReviewTimeoutClaimed(uint256 indexed escrowId, address indexed caller, uint256 amount);
-    event DisputeRaised(uint256 indexed escrowId, address indexed client, uint256 disputeDeadline);
-    event DisputeProofSubmitted(uint256 indexed escrowId, address indexed freelancer, bytes32 proofHash);
+    event DisputeRaised(uint256 indexed escrowId, address indexed client, uint256 disputeDeadline, string reason);
+    event DisputeProofSubmitted(uint256 indexed escrowId, address indexed freelancer, string proofLink);
     event DisputeApproved(uint256 indexed escrowId, address indexed client, uint256 amount);
     event DisputeWithdrawn(uint256 indexed escrowId, address indexed client);
     event RefundAccepted(uint256 indexed escrowId, address indexed freelancer, uint256 amount);
@@ -479,8 +480,8 @@ contract FairPayEscrow is ReentrancyGuard {
     // Work submission & Review
     // ─────────────────────────────────────────────
 
-    /// @notice Freelancer submits a keccak256 hash of their deliverable. Starts review timer.
-    function submitWork(uint256 escrowId, bytes32 _workHash)
+    /// @notice Freelancer submits a link or description of their deliverable. Starts review timer.
+    function submitWork(uint256 escrowId, string calldata _workLink)
         external
         escrowExists(escrowId)
         onlyFreelancer(escrowId)
@@ -488,11 +489,11 @@ contract FairPayEscrow is ReentrancyGuard {
     {
         Escrow storage e = escrows[escrowId];
         if (block.timestamp >= e.workDeadline) revert WorkDeadlineElapsed();
-        if (_workHash == bytes32(0)) revert EmptyWorkHash();
-        e.workHash            = _workHash;
+        if (bytes(_workLink).length == 0) revert EmptyWorkLink();
+        e.workLink            = _workLink;
         e.submissionTimestamp = block.timestamp;
         e.state               = State.UnderReview;
-        emit WorkSubmitted(escrowId, msg.sender, _workHash);
+        emit WorkSubmitted(escrowId, msg.sender, _workLink);
     }
 
     /// @notice Client approves the work. Pays freelancer immediately.
@@ -535,37 +536,39 @@ contract FairPayEscrow is ReentrancyGuard {
     // Dispute flow
     // ─────────────────────────────────────────────
 
-    /// @notice Client raises a dispute during the review window.
-    function dispute(uint256 escrowId)
+    /// @notice Client raises a dispute during the review window with a reason.
+    function dispute(uint256 escrowId, string calldata _reason)
         external
         escrowExists(escrowId)
         onlyClient(escrowId)
         inState(escrowId, State.UnderReview)
     {
+        if (bytes(_reason).length == 0) revert EmptyWorkLink();
         Escrow storage e = escrows[escrowId];
         e.disputeDeadline  = block.timestamp + e.disputePeriod;
         e.disputeResponded = false;
-        e.disputeProofHash = bytes32(0);
+        e.disputeReason    = _reason;
+        e.disputeProof     = "";
         e.state = State.Disputed;
-        emit DisputeRaised(escrowId, msg.sender, e.disputeDeadline);
+        emit DisputeRaised(escrowId, msg.sender, e.disputeDeadline, _reason);
     }
 
     /// @notice Freelancer submits proof during dispute.
     ///         Resets the dispute deadline so the client gets a full disputePeriod
     ///         to review the proof. Only one response allowed per dispute.
-    function submitDisputeProof(uint256 escrowId, bytes32 _proofHash)
+    function submitDisputeProof(uint256 escrowId, string calldata _proofLink)
         external
         escrowExists(escrowId)
         onlyFreelancer(escrowId)
         inState(escrowId, State.Disputed)
     {
         Escrow storage e = escrows[escrowId];
-        if (_proofHash == bytes32(0)) revert EmptyWorkHash();
+        if (bytes(_proofLink).length == 0) revert EmptyWorkLink();
         if (e.disputeResponded) revert FreelancerAlreadyResponded();
-        e.disputeProofHash = _proofHash;
+        e.disputeProof     = _proofLink;
         e.disputeResponded = true;
         e.disputeDeadline  = block.timestamp + e.disputePeriod;
-        emit DisputeProofSubmitted(escrowId, msg.sender, _proofHash);
+        emit DisputeProofSubmitted(escrowId, msg.sender, _proofLink);
     }
 
     /// @notice Client approves freelancer's dispute proof. Pays freelancer.
@@ -598,7 +601,8 @@ contract FairPayEscrow is ReentrancyGuard {
         Escrow storage e = escrows[escrowId];
         e.disputeDeadline  = 0;
         e.disputeResponded = false;
-        e.disputeProofHash = bytes32(0);
+        e.disputeReason    = "";
+        e.disputeProof     = "";
         e.state = State.UnderReview;
         emit DisputeWithdrawn(escrowId, msg.sender);
     }

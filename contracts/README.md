@@ -23,7 +23,7 @@ Alice now has three options.
 *Step 4 — Dispute (if raised).*
 If Alice disputes, Bob gets 3 days to respond. He can call  `submitDisputeProof()` with a hash proving his work was done properly. This resets the 3-day timer so Alice has time to review his proof. Now Alice can `approveAfterDispute()` to pay Bob or `withdrawDispute()` to go back to review, or stay silent — and since Bob defended himself, he auto-wins after the timer runs out. Alternatively, if Bob knows his work was bad, he can call `acceptRefund()` and the money goes back to Alice. If Bob never responds at all, Alice gets an automatic refund after the deadline.
 
-## Depencencies
+## Dependencies
 
 This project uses the following dependencies:
 
@@ -54,7 +54,15 @@ To run the tests, run the following command:
 npx hardhat test
 ```
 
-## Project structure
+## Contract Address
+
+The contract is deployed on the RSK Testnet at the following address:
+
+`0xc9e098e62c14c8dc015f238c226ea581fa5c4425`
+
+Explorer: [https://explorer.testnet.rootstock.io/address/0xc9e098e62c14c8dc015f238c226ea581fa5c4425](https://explorer.testnet.rootstock.io/address/0xc9e098e62c14c8dc015f238c226ea581fa5c4425)
+
+## Project Structure
 
 The project is structured as follows:
 

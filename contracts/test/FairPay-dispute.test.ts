@@ -11,8 +11,9 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
   const DISPUTE_PERIOD = 3 * 24 * 60 * 60;
   const WORK_DURATION = 14 * 24 * 60 * 60;
   const DEPOSIT = hre.ethers.parseEther("1.0");
-  const WORK_HASH = hre.ethers.keccak256(hre.ethers.toUtf8Bytes("deliverable-v1"));
-  const PROOF_HASH = hre.ethers.keccak256(hre.ethers.toUtf8Bytes("proof-v1"));
+  const WORK_LINK      = "https://github.com/user/deliverable";
+  const DISPUTE_REASON = "Work does not meet requirements";
+  const PROOF_LINK     = "https://proof.example.com/v1";
 
   const State = { Created: 0, Funded: 1, UnderReview: 2, Disputed: 3, Released: 4 };
 
@@ -31,19 +32,19 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
   async function underReviewFixture() {
     const base = await baseFixture();
     await base.contract.connect(base.client).deposit(base.escrowId, { value: DEPOSIT });
-    await base.contract.connect(base.freelancer).submitWork(base.escrowId, WORK_HASH);
+    await base.contract.connect(base.freelancer).submitWork(base.escrowId, WORK_LINK);
     return base;
   }
 
   async function disputedFixture() {
     const base = await underReviewFixture();
-    await base.contract.connect(base.client).dispute(base.escrowId);
+    await base.contract.connect(base.client).dispute(base.escrowId, DISPUTE_REASON);
     return base;
   }
 
   async function disputeRespondedFixture() {
     const base = await disputedFixture();
-    await base.contract.connect(base.freelancer).submitDisputeProof(base.escrowId, PROOF_HASH);
+    await base.contract.connect(base.freelancer).submitDisputeProof(base.escrowId, PROOF_LINK);
     return base;
   }
 
@@ -53,8 +54,8 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
     it("should transition to Disputed and set deadline", async function () {
       const { contract, client, escrowId } = await loadFixture(underReviewFixture);
 
-      await expect(contract.connect(client).dispute(escrowId))
-        .to.emit(contract, "DisputeRaised").withArgs(escrowId, client.address, anyValue);
+      await expect(contract.connect(client).dispute(escrowId, DISPUTE_REASON))
+        .to.emit(contract, "DisputeRaised").withArgs(escrowId, client.address, anyValue, DISPUTE_REASON);
 
       const e = await contract.getEscrow(escrowId);
       expect(e.state).to.equal(State.Disputed);
@@ -65,14 +66,14 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
     it("should revert if not the client", async function () {
       const { contract, freelancer, escrowId } = await loadFixture(underReviewFixture);
       await expect(
-        contract.connect(freelancer).dispute(escrowId)
+        contract.connect(freelancer).dispute(escrowId, DISPUTE_REASON)
       ).to.be.revertedWithCustomError(contract, "OnlyClient");
     });
 
     it("should revert if not in UnderReview state", async function () {
       const { contract, client, escrowId } = await loadFixture(baseFixture);
       await expect(
-        contract.connect(client).dispute(escrowId)
+        contract.connect(client).dispute(escrowId, DISPUTE_REASON)
       ).to.be.revertedWithCustomError(contract, "UnexpectedState");
     });
   });
@@ -85,42 +86,41 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
 
       const eBefore = await contract.getEscrow(escrowId);
 
-      await expect(contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_HASH))
+      await expect(contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_LINK))
         .to.emit(contract, "DisputeProofSubmitted")
-        .withArgs(escrowId, freelancer.address, PROOF_HASH);
+        .withArgs(escrowId, freelancer.address, PROOF_LINK);
 
       const e = await contract.getEscrow(escrowId);
       expect(e.disputeResponded).to.equal(true);
-      expect(e.disputeProofHash).to.equal(PROOF_HASH);
+      expect(e.disputeProof).to.equal(PROOF_LINK);
       expect(e.state).to.equal(State.Disputed);
     });
 
     it("should revert if not the freelancer", async function () {
       const { contract, client, escrowId } = await loadFixture(disputedFixture);
       await expect(
-        contract.connect(client).submitDisputeProof(escrowId, PROOF_HASH)
+        contract.connect(client).submitDisputeProof(escrowId, PROOF_LINK)
       ).to.be.revertedWithCustomError(contract, "OnlyFreelancer");
     });
 
-    it("should revert if hash is empty", async function () {
+    it("should revert if proof is empty", async function () {
       const { contract, freelancer, escrowId } = await loadFixture(disputedFixture);
       await expect(
-        contract.connect(freelancer).submitDisputeProof(escrowId, hre.ethers.ZeroHash)
-      ).to.be.revertedWithCustomError(contract, "EmptyWorkHash");
+        contract.connect(freelancer).submitDisputeProof(escrowId, "")
+      ).to.be.revertedWithCustomError(contract, "EmptyWorkLink");
     });
 
     it("should revert if already responded", async function () {
       const { contract, freelancer, escrowId } = await loadFixture(disputeRespondedFixture);
-      const h2 = hre.ethers.keccak256(hre.ethers.toUtf8Bytes("proof-v2"));
       await expect(
-        contract.connect(freelancer).submitDisputeProof(escrowId, h2)
+        contract.connect(freelancer).submitDisputeProof(escrowId, "https://proof.example.com/v2")
       ).to.be.revertedWithCustomError(contract, "FreelancerAlreadyResponded");
     });
 
     it("should revert if not in Disputed state", async function () {
       const { contract, freelancer, escrowId } = await loadFixture(underReviewFixture);
       await expect(
-        contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_HASH)
+        contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_LINK)
       ).to.be.revertedWithCustomError(contract, "UnexpectedState");
     });
   });
@@ -260,22 +260,21 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
     it("dispute → withdraw → re-dispute works cleanly", async function () {
       const { contract, client, freelancer, escrowId } = await loadFixture(underReviewFixture);
 
-      await contract.connect(client).dispute(escrowId);
-      await contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_HASH);
+      await contract.connect(client).dispute(escrowId, DISPUTE_REASON);
+      await contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_LINK);
       await contract.connect(client).withdrawDispute(escrowId);
 
       // Re-dispute — fresh state
-      await contract.connect(client).dispute(escrowId);
+      await contract.connect(client).dispute(escrowId, DISPUTE_REASON);
       const e = await contract.getEscrow(escrowId);
       expect(e.disputeResponded).to.equal(false);
-      expect(e.disputeProofHash).to.equal(hre.ethers.ZeroHash);
+      expect(e.disputeProof).to.equal("");
 
       // Freelancer can respond again
-      const h2 = hre.ethers.keccak256(hre.ethers.toUtf8Bytes("proof-v2"));
-      await contract.connect(freelancer).submitDisputeProof(escrowId, h2);
+      await contract.connect(freelancer).submitDisputeProof(escrowId, "https://proof.example.com/v2");
       const e2 = await contract.getEscrow(escrowId);
       expect(e2.disputeResponded).to.equal(true);
-      expect(e2.disputeProofHash).to.equal(h2);
+      expect(e2.disputeProof).to.equal("https://proof.example.com/v2");
     });
 
     it("dispute deadline resets when freelancer submits proof", async function () {
@@ -284,7 +283,7 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
 
       await time.increase(2 * 24 * 60 * 60); // 2 days into 3-day window
 
-      await contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_HASH);
+      await contract.connect(freelancer).submitDisputeProof(escrowId, PROOF_LINK);
       const e2 = await contract.getEscrow(escrowId);
       expect(e2.disputeDeadline).to.be.greaterThan(e1.disputeDeadline);
     });
@@ -293,7 +292,7 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
       const { contract, client, freelancer, escrowId } = await loadFixture(baseFixture);
       await contract.connect(client).deposit(escrowId, { value: DEPOSIT });
       await time.increase(WORK_DURATION - 2);
-      await expect(contract.connect(freelancer).submitWork(escrowId, WORK_HASH))
+      await expect(contract.connect(freelancer).submitWork(escrowId, WORK_LINK))
         .to.emit(contract, "WorkSubmitted");
     });
 
@@ -333,7 +332,7 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
       expect(await hre.ethers.provider.getBalance(addr)).to.equal(DEPOSIT + dep2);
 
       // Release escrow 0
-      await contract.connect(freelancer).submitWork(0, WORK_HASH);
+      await contract.connect(freelancer).submitWork(0, WORK_LINK);
       await contract.connect(client).approve(0);
       expect(await hre.ethers.provider.getBalance(addr)).to.equal(dep2);
     });
@@ -346,11 +345,11 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
         .to.be.revertedWithCustomError(contract, "UnexpectedState");
       await expect(contract.connect(client).cancelEscrow(escrowId))
         .to.be.revertedWithCustomError(contract, "UnexpectedState");
-      await expect(contract.connect(freelancer).submitWork(escrowId, WORK_HASH))
+      await expect(contract.connect(freelancer).submitWork(escrowId, WORK_LINK))
         .to.be.revertedWithCustomError(contract, "UnexpectedState");
       await expect(contract.connect(client).approve(escrowId))
         .to.be.revertedWithCustomError(contract, "UnexpectedState");
-      await expect(contract.connect(client).dispute(escrowId))
+      await expect(contract.connect(client).dispute(escrowId, DISPUTE_REASON))
         .to.be.revertedWithCustomError(contract, "UnexpectedState");
       await expect(contract.connect(freelancer).acceptRefund(escrowId))
         .to.be.revertedWithCustomError(contract, "UnexpectedState");
@@ -359,7 +358,7 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
     it("full happy path: create → deposit → submit → approve", async function () {
       const { contract, client, freelancer } = await loadFixture(baseFixture);
       await contract.connect(client).deposit(0, { value: DEPOSIT });
-      await contract.connect(freelancer).submitWork(0, WORK_HASH);
+      await contract.connect(freelancer).submitWork(0, WORK_LINK);
       await contract.connect(client).approve(0);
       expect((await contract.getEscrow(0)).state).to.equal(State.Released);
     });
@@ -367,9 +366,9 @@ describe("FairPayEscrow — Disputes & Edge Cases", function () {
     it("full dispute defended path", async function () {
       const { contract, client, freelancer, outsider } = await loadFixture(baseFixture);
       await contract.connect(client).deposit(0, { value: DEPOSIT });
-      await contract.connect(freelancer).submitWork(0, WORK_HASH);
-      await contract.connect(client).dispute(0);
-      await contract.connect(freelancer).submitDisputeProof(0, PROOF_HASH);
+      await contract.connect(freelancer).submitWork(0, WORK_LINK);
+      await contract.connect(client).dispute(0, DISPUTE_REASON);
+      await contract.connect(freelancer).submitDisputeProof(0, PROOF_LINK);
       await time.increase(DISPUTE_PERIOD);
       await contract.connect(outsider).claimAfterDisputeTimeout(0);
       expect((await contract.getEscrow(0)).state).to.equal(State.Released);

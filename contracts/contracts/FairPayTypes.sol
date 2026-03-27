@@ -25,7 +25,7 @@ struct Escrow {
     address freelancer;
     uint256 amount;
     State   state;
-    bytes32 workHash;
+    string  workLink;
     uint256 submissionTimestamp;
     uint256 reviewPeriod;
     uint256 disputePeriod;
@@ -33,7 +33,8 @@ struct Escrow {
     uint256 workDeadline;
     uint256 disputeDeadline;
     bool    disputeResponded;
-    bytes32 disputeProofHash;
+    string  disputeReason;
+    string  disputeProof;
 }
 
 // ─────────────────────────────────────────────
@@ -47,7 +48,7 @@ error ZeroAddress();
 error ZeroPeriod();
 error ClientFreelancerSame();
 error ZeroDeposit();
-error EmptyWorkHash();
+error EmptyWorkLink();
 error ReviewPeriodNotElapsed();
 error DisputePeriodNotElapsed();
 error TransferFailed();
