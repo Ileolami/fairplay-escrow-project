@@ -74,7 +74,7 @@ export default function Home() {
       </main>
 
       <footer className="border-t border-zinc-200 py-4 text-center text-xs text-zinc-400 dark:border-zinc-800">
-        FairPlay Escrow — RSK Testnet
+        FairPay Escrow — RSK Testnet
       </footer>
     </div>
   );
